@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AE account</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #1f3a5f; color: #1e293b; min-height: 100vh; padding: 24px 16px; box-sizing: border-box; }
+    .card { background: #fff; border-radius: 16px; padding: 24px; max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 22px; margin: 0; color: #1f3a5f; }
+    h2 { font-size: 17px; margin: 18px 0 8px; color: #1f3a5f; }
+    h3 { font-size: 14px; margin: 14px 0 4px; color: #334155; }
+    .muted { color: #64748b; font-size: 13px; }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; }
+    .tab { padding: 6px 12px; border-radius: 999px; border: 1px solid #cbd5e1; background: #f8fafc; cursor: pointer; font-size: 14px; }
+    .tab.on { background: #1f3a5f; color: #fff; border-color: #1f3a5f; }
+    .grid { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; align-items: start; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    .box { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+    .box h3 { margin-top: 0; }
+    .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #e0e7ff; color: #1e3a8a; font-size: 12px; margin: 0 4px 4px 0; }
+    .pill.extra { background: #dcfce7; color: #166534; } .pill.block { background: #fee2e2; color: #991b1b; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+    th { color: #475569; font-weight: 600; background: #f8fafc; position: sticky; top: 0; }
+    tr.sel td { background: #eff6ff; }
+    td.c, th.c { text-align: center; }
+    input, select, textarea { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box; }
+    textarea { width: 100%; }
+    button { padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 14px; cursor: pointer; background: #f8fafc; }
+    button.primary { background: #1f3a5f; color: #fff; border-color: #1f3a5f; }
+    button.small { padding: 3px 8px; font-size: 12px; }
+    button:disabled { opacity: .5; cursor: default; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+    .msg { padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+    .msg.ok { background: #f0fdf4; color: #166534; } .msg.err { background: #fef2f2; color: #b91c1c; }
+    code { background: #f1f5f9; padding: 2px 6px; border-radius: 6px; font-size: 12px; word-break: break-all; }
+    .scroll { max-height: 560px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <main class="card" id="app"><p>Loading…</p></main>
+  <script type="module">
+    // The AE account page (generic connectors plan, Stage 3b). Everyone: My account. System admins: People, Roles,
+    // Invite, Activity. The connector checks who is signed in and what they may change; this page only shows and asks.
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    const SUPABASE_URL = 'https://itaahajysrmtzfvlzbvu.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0YWFoYWp5c3JtdHpmdmx6YnZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ0MzEwOTAsImV4cCI6MjExMDAwNzA5MH0.YajNSb52QSFwZMXj0qlELDouFUGGl6ZIp3cxb3kFzPM';
+    const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: 'pkce', detectSessionInUrl: true } });
+    const app = document.getElementById('app');
+    const params = new URLSearchParams(location.search);
+    const server = params.get('server') === 'ae-ops-staging' ? 'ae-ops-staging' : 'ae-ops';
+    const base = `${SUPABASE_URL}/functions/v1/${server}`;
+    const here = () => `${location.origin}${location.pathname}${server === 'ae-ops-staging' ? '?server=ae-ops-staging' : ''}`;
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const when = (iso) => (iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : 'Never');
+    let token = null, me = null, tab = 'account', admin = null;
+
+    async function api(path, body) {
+      const r = await fetch(`${base}${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+      const j = await r.json().catch(() => ({ ok: false, text: `The connector answered ${r.status}.` }));
+      if (!r.ok && j.ok === undefined) j.ok = false;
+      if (!r.ok && !j.text) j.text = j.error_description || j.error || `Couldn't load (${r.status}).`;
+      return j;
+    }
+    const msg = (el, res) => { el.innerHTML = `<div class="msg ${res.ok ? 'ok' : 'err'}">${esc(res.text || (res.ok ? 'Saved.' : 'Something went wrong.'))}</div>`; };
+
+    function signIn(text) {
+      app.innerHTML = `<h1>AE account</h1>${text ? `<div class="msg err">${esc(text)}</div>` : ''}
+        <p>Sign in with your Asset Engineers Google account to see your access, connect your Gmail and get the connector addresses.</p>
+        <button class="primary" id="g">Sign in with Google</button>`;
+      document.getElementById('g').onclick = () => sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: here(), queryParams: { hd: 'assetengineers.com.au', prompt: 'select_account' } } });
+    }
+
+    async function start() {
+      const { data: s } = await sb.auth.getSession();
+      const notice = params.get('gmail') === 'connected' ? 'Gmail connected.' : null;
+      if (params.has('code') || params.has('gmail')) history.replaceState(null, '', here());
+      if (!s.session) return signIn(params.get('error_description'));
+      token = s.session.access_token;
+      me = await api('/account/me');
+      if (!me.ok) return signIn(me.text);
+      render(notice);
+    }
+
+    function render(notice) {
+      const tabs = [['account', 'My account'], ...(me.isAdmin ? [['people', 'People'], ['roles', 'Roles'], ['invite', 'Invite'], ['activity', 'Activity']] : [])];
+      app.innerHTML = `<div class="row" style="justify-content:space-between;margin:0"><div><h1>AE account${server === 'ae-ops-staging' ? ' (staging)' : ''}</h1>
+        <div class="muted">Signed in with Google as ${esc(me.email)}</div></div><button id="out" class="small">Sign out</button></div>
+        <div class="tabs">${tabs.map(([id, l]) => `<button class="tab ${tab === id ? 'on' : ''}" data-t="${id}">${l}</button>`).join('')}</div>
+        ${notice ? `<div class="msg ok">${esc(notice)}</div>` : ''}<div id="view"></div>`;
+      document.getElementById('out').onclick = async () => { await sb.auth.signOut(); signIn(); };
+      for (const b of app.querySelectorAll('[data-t]')) b.onclick = () => { tab = b.dataset.t; render(); };
+      ({ account: myAccount, people, roles, invite, activity })[tab]();
+    }
+    const view = () => document.getElementById('view');
+
+    // ---- My account ---------------------------------------------------------------------------------------------
+    function myAccount() {
+      const has = new Set(me.permissions);
+      const groups = me.groups.map((g) => ({ g: g.group, items: g.permissions.filter((p) => has.has(p)) })).filter((x) => x.items.length);
+      const g = me.gmail;
+      view().innerHTML = `<div class="grid"><div>
+          <h2>What you can do</h2>
+          <div>${me.roles.map((r) => `<span class="pill">${esc(r)}</span>`).join('') || '<span class="muted">No role yet</span>'}
+            ${me.extras.map((o) => `<span class="pill extra">+ ${esc(me.labels[o.permission] ?? o.permission)}${o.until ? ` (until ${o.until})` : ''}</span>`).join('')}
+            ${me.blocks.map((o) => `<span class="pill block">− ${esc(me.labels[o.permission] ?? o.permission)}${o.until ? ` (until ${o.until})` : ''}</span>`).join('')}</div>
+          ${groups.map((x) => `<h3>${esc(x.g)}</h3>${x.items.map((p) => `<div style="font-size:14px;margin:2px 0">${esc(me.labels[p])}</div>`).join('')}`).join('')}
+          <p class="muted">Roles and permissions are set by a system admin. Ask them if something you need is missing.</p>
+        </div><div>
+          <div class="box"><h3>Gmail <span class="pill ${g.connected ? 'extra' : 'block'}">${g.connected ? 'Connected' : g.problem ? 'Needs reconnecting' : 'Not connected'}</span></h3>
+            <div style="font-size:14px">${g.connected ? `Reading, filing and sending as ${esc(g.email)}.` : g.problem ? `It stopped working (${esc(g.problem)}). Reconnect it.` : 'Not connected yet. The email tools will ask you to connect first.'}</div>
+            <div class="row"><button id="gc" class="${g.connected ? '' : 'primary'}">${g.connected ? 'Reconnect' : 'Connect Gmail'}</button>${g.connected ? '<button id="gd">Disconnect</button>' : ''}</div><div id="gm"></div></div>
+          <div class="box"><h3>Email signature</h3>
+            <div class="muted">From name</div><input id="fn" style="width:100%" value="${esc(me.fromName ?? me.name)}" />
+            <div class="muted" style="margin-top:8px">Signature (added under emails the connector sends as you)</div><textarea id="sig" rows="4">${esc(me.signature ?? '')}</textarea>
+            <div class="row"><button class="primary" id="ss">Save</button></div><div id="sm"></div></div>
+          <div class="box"><h3>Working day <span class="pill">View only</span></h3>
+            <div style="font-size:14px">${me.dayStart || me.dayHours ? `${esc(me.dayStart ?? '08:00')} start, ${esc(me.dayHours ?? 8)} hours a day` : 'Not set (08:00, 8 hours assumed)'}. Used to lay out your timesheet.</div></div>
+          <div class="box"><h3>Cursor (optional)</h3>
+            <div style="font-size:13px">Settings, MCP, Add new MCP server; paste this address as a remote server, then sign in when it asks.</div>
+            <code id="u1">${esc(me.connectors.ops)}</code>${me.connectors.reports ? `<div class="muted" style="margin-top:6px">AE Reports</div><code>${esc(me.connectors.reports)}</code>` : ''}
+            <div class="row"><button id="cp" class="small">Copy address${me.connectors.reports ? 'es' : ''}</button></div></div>
+        </div></div>`;
+      view().insertAdjacentHTML('afterbegin', `<div class="box" style="border-color:#1f3a5f"><h3>Set up Claude (once, about 10 minutes)</h3>
+        <ol style="font-size:14px;line-height:1.6;margin:6px 0 0;padding-left:20px">
+          <li>In Claude: <b>Settings, Privacy</b>, switch off <b>"Help improve Claude"</b>. Client information must never be used for training.</li>
+          <li><b>Gmail</b>: ${g.connected ? `connected as ${esc(g.email)} ✓` : '<button id="gc2" class="small primary">Connect Gmail</button> (Claude reads, files and sends email as you)'}</li>
+          <li><b>Download the plugin</b> (the AE Operations connector and the skills for your work, in one file):
+            <div class="row">${me.plugins.map((p) => `<button class="small ${p.name === 'ae-operations' ? 'primary' : ''}" data-plugin="${p.name}" data-file="${esc(p.file)}">Download ${esc(p.label)}</button>`).join('')}</div>
+            <div class="muted">${me.plugins.map((p) => `${esc(p.label)}: ${esc(p.note)}`).join('<br/>')}</div><div id="pm"></div></li>
+          <li><b>Install it</b>: in <a href="https://claude.ai" target="_blank" rel="noopener">Claude</a>, Customize, Plugins, Add, <b>Upload plugin</b>, and choose the downloaded file${me.plugins.length > 1 ? ' (each one)' : ''}.</li>
+          <li><b>Connect it</b>: open the plugin's <b>Connectors</b> tab, connect <b>AE Operations</b>, then Sign in with Google and Allow.</li>
+          <li><b>Try it</b>: ask Claude "What can I do with AE Operations?" When the plugin is updated, download it again and upload it the same way.</li>
+        </ol></div>`);
+      const gc2 = document.getElementById('gc2');
+      if (gc2) gc2.onclick = () => document.getElementById('gc').click();
+      for (const b of view().querySelectorAll('[data-plugin]')) b.onclick = async () => {
+        b.disabled = true;
+        const r = await fetch(`${base}/account/plugin?name=${encodeURIComponent(b.dataset.plugin)}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); msg(document.getElementById('pm'), { ok: false, text: j.text || `Couldn't download (${r.status}).` }); b.disabled = false; return; }
+        const url = URL.createObjectURL(await r.blob());
+        const a = Object.assign(document.createElement('a'), { href: url, download: b.dataset.file });
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+        msg(document.getElementById('pm'), { ok: true, text: `Downloaded ${b.dataset.file}. Next: upload it in Claude (step 4).` });
+        b.disabled = false;
+      };
+      document.getElementById('gc').onclick = async () => {
+        const r = await fetch(`${base}/google/start`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ return_to: here() }) }).then((x) => x.json()).catch(() => ({}));
+        if (r.url) location.href = r.url; else msg(document.getElementById('gm'), { ok: false, text: "Couldn't start the Gmail sign-in." });
+      };
+      const gd = document.getElementById('gd');
+      if (gd) gd.onclick = async () => {
+        if (!confirm('Disconnect your Gmail from AE Operations? The email tools will stop until you connect again.')) return;
+        const res = await api('/account/gmail/disconnect', {});
+        msg(document.getElementById('gm'), res);
+        if (res.ok) { me = await api('/account/me'); setTimeout(() => render(), 2500); }
+      };
+      document.getElementById('ss').onclick = async () => msg(document.getElementById('sm'), await api('/account/me', { fromName: document.getElementById('fn').value, signature: document.getElementById('sig').value }));
+      document.getElementById('cp').onclick = async () => {
+        await navigator.clipboard.writeText([`AE Operations: ${me.connectors.ops}`, me.connectors.reports ? `AE Reports: ${me.connectors.reports}` : ''].filter(Boolean).join('\n'));
+        document.getElementById('cp').textContent = 'Copied';
+      };
+    }
+
+    // ---- People (admin) -----------------------------------------------------------------------------------------
+    let selected = null;
+    async function people() {
+      view().innerHTML = '<p class="muted">Loading people…</p>';
+      admin = await api('/account/people');
+      if (!admin.ok) return msg(view(), admin);
+      if (!selected || !admin.people.some((p) => p.userId === selected)) selected = admin.people.find((p) => p.userId !== admin.me)?.userId ?? admin.people[0]?.userId;
+      drawPeople();
+    }
+    const roleName = (id) => admin.roles.find((r) => r.id === id)?.name ?? id;
+    const rolePerms = (ids) => { const s = new Set(); for (const id of ids) { const r = admin.roles.find((x) => x.id === id); for (const p of r?.permissions ?? []) { if (p === '*') Object.keys(admin.labels).forEach((x) => s.add(x)); else s.add(p); } } return s; };
+
+    function drawPeople() {
+      const p = admin.people.find((x) => x.userId === selected);
+      const allPerms = admin.groups.flatMap((g) => g.permissions);
+      const state = p ? JSON.parse(JSON.stringify({ roles: p.roles, extras: p.extras, blocks: p.blocks, access: p.access, dayStart: p.dayStart, dayHours: p.dayHours })) : null;
+      view().innerHTML = `<div class="scroll" style="max-height:260px"><table><tr><th>Person</th><th>Roles</th><th>Extras / blocks</th><th>Access</th><th>Gmail</th><th>Last used</th><th></th></tr>
+        ${admin.people.map((x) => `<tr class="${x.userId === selected ? 'sel' : ''}"><td><b>${esc(x.name)}</b><div class="muted">${esc(x.email)}</div></td><td>${esc(x.roles.map(roleName).join(', ') || 'none')}</td>
+          <td>${[x.extras.length ? `${x.extras.length} extra` : '', x.blocks.length ? `${x.blocks.length} blocked` : ''].filter(Boolean).join(', ') || 'None'}</td>
+          <td>${x.access === 'invited' ? `Invited${x.inviteExpires ? ` (until ${esc(x.inviteExpires.slice(0, 10))})` : ''}` : x.access === 'on' ? 'On' : 'Off'}</td><td>${esc(x.gmail)}</td><td>${esc(when(x.lastUsed))}</td>
+          <td><button class="small ${x.userId === selected ? 'primary' : ''}" data-p="${x.userId}">${x.userId === selected ? 'Editing' : 'Edit'}</button></td></tr>`).join('')}</table></div>
+        ${p ? `<div class="grid" style="margin-top:16px"><div>
+          <h2>${esc(p.name)}</h2><div class="muted">${esc(p.email)}${p.peopleRecord ? '' : ' · no People record in Notion (timesheets need one)'}</div>
+          <div class="row"><label><input type="checkbox" id="acc" ${state.access !== 'off' ? 'checked' : ''}/> Access ${state.access === 'invited' ? '(invited, not signed in yet)' : ''}</label></div>
+          <p class="muted">Switching access off stops them straight away (leavers).</p>
+          <h3>Roles</h3>${admin.roles.map((r) => `<div><label><input type="checkbox" data-r="${r.id}" ${state.roles.includes(r.id) ? 'checked' : ''}/> ${esc(r.name)}</label></div>`).join('')}
+          <h3>Working day</h3><div class="row" style="margin-top:0"><input id="ds" placeholder="08:00" size="6" value="${esc(state.dayStart ?? '')}"/> start, <input id="dh" placeholder="8" size="4" value="${esc(state.dayHours ?? '')}"/> hours a day</div>
+          <div class="row">${state.access === 'invited' ? '<button id="ri">Re-send invite</button>' : ''}<button class="primary" id="sv">Save changes</button></div><div id="pm"></div>
+        </div><div>
+          <h3 id="cnt"></h3><p class="muted">"From role" follows their roles. Choose Extra to add one ability, or Blocked to take one away; an end date is optional.</p>
+          <div class="scroll"><table><tr><th>Permission</th><th class="c">From role</th><th>This person</th><th>Until</th></tr>
+          ${allPerms.map((perm) => `<tr><td>${esc(admin.labels[perm])}<div class="muted">${esc(perm)}</div></td><td class="c" data-fr="${perm}"></td>
+            <td><select data-o="${perm}"><option value="role">As role</option><option value="extra">Extra: allow</option><option value="block">Blocked</option></select></td>
+            <td><input type="date" data-u="${perm}" style="width:140px"/></td></tr>`).join('')}</table></div>
+        </div></div>` : '<p>No people yet. Invite someone.</p>'}`;
+      for (const b of view().querySelectorAll('[data-p]')) b.onclick = () => { selected = b.dataset.p; drawPeople(); };
+      if (!p) return;
+      const over = (perm) => state.extras.find((o) => o.permission === perm) ? 'extra' : state.blocks.find((o) => o.permission === perm) ? 'block' : 'role';
+      const refresh = () => {
+        const fr = rolePerms(state.roles);
+        let n = 0;
+        for (const perm of allPerms) {
+          const o = over(perm);
+          const on = o === 'extra' || (o === 'role' && fr.has(perm));
+          if (on) n++;
+          view().querySelector(`[data-fr="${perm}"]`).textContent = fr.has(perm) ? 'Yes' : '';
+          const sel = view().querySelector(`[data-o="${perm}"]`);
+          sel.value = o;
+          sel.options[1].disabled = fr.has(perm); sel.options[2].disabled = !fr.has(perm) && o !== 'block';
+          const u = view().querySelector(`[data-u="${perm}"]`);
+          const ov = state.extras.find((x) => x.permission === perm) ?? state.blocks.find((x) => x.permission === perm);
+          u.value = ov?.until ?? ''; u.disabled = !ov;
+          sel.closest('tr').style.background = o === 'extra' ? '#f0fdf4' : o === 'block' ? '#fef2f2' : '';
+          sel.closest('tr').style.color = on ? '' : '#94a3b8';
+        }
+        document.getElementById('cnt').textContent = `What ${p.name.split(' ')[0]} can do (${n} of ${allPerms.length})`;
+      };
+      for (const c of view().querySelectorAll('[data-r]')) c.onchange = () => { state.roles = c.checked ? [...state.roles, c.dataset.r] : state.roles.filter((x) => x !== c.dataset.r); refresh(); };
+      for (const s of view().querySelectorAll('[data-o]')) s.onchange = () => {
+        const perm = s.dataset.o;
+        state.extras = state.extras.filter((x) => x.permission !== perm); state.blocks = state.blocks.filter((x) => x.permission !== perm);
+        if (s.value === 'extra') state.extras.push({ permission: perm, until: null });
+        if (s.value === 'block') state.blocks.push({ permission: perm, until: null });
+        refresh();
+      };
+      for (const u of view().querySelectorAll('[data-u]')) u.onchange = () => { const ov = state.extras.find((x) => x.permission === u.dataset.u) ?? state.blocks.find((x) => x.permission === u.dataset.u); if (ov) ov.until = u.value || null; };
+      document.getElementById('acc').onchange = (e) => { state.access = e.target.checked ? (p.access === 'invited' ? 'invited' : 'on') : 'off'; };
+      document.getElementById('sv').onclick = async () => {
+        state.dayStart = document.getElementById('ds').value.trim() || null;
+        const h = document.getElementById('dh').value.trim(); state.dayHours = h ? Number(h) : null;
+        if (state.access === 'off' && p.access !== 'off' && !confirm(`Switch off ${p.name}'s access? It stops straight away.`)) return;
+        const res = await api('/account/person', { userId: p.userId, state });
+        msg(document.getElementById('pm'), res);
+        if (res.ok) { const keep = selected; admin = await api('/account/people'); selected = keep; setTimeout(drawPeople, 1800); }
+      };
+      const ri = document.getElementById('ri');
+      if (ri) ri.onclick = async () => msg(document.getElementById('pm'), await api('/account/reinvite', { userId: p.userId }));
+      refresh();
+    }
+
+    // ---- Roles (admin) ------------------------------------------------------------------------------------------
+    async function roles() {
+      view().innerHTML = '<p class="muted">Loading roles…</p>';
+      const r = await api('/account/roles');
+      if (!r.ok) return msg(view(), r);
+      const edit = r.roles.map((x) => ({ ...x, permissions: [...x.permissions] }));
+      const perms = r.groups.flatMap((g) => g.permissions.map((p) => ({ p, g: g.group })));
+      view().innerHTML = `<p class="muted">Tick a box to give that permission to everyone with the role. Taking one away is refused straight away; new ones show in people's next new chat. Director always has everything, so nobody can lock the business out.</p>
+        <div class="scroll"><table><tr><th>Permission</th>${edit.map((x) => `<th class="c">${esc(x.name)}</th>`).join('')}</tr>
+        ${perms.map(({ p, g }) => `<tr><td>${esc(r.labels[p])}<div class="muted">${esc(g)}</div></td>${edit.map((x, i) => `<td class="c"><input type="checkbox" data-i="${i}" data-p="${p}" ${x.permissions.includes('*') || x.permissions.includes(p) ? 'checked' : ''} ${x.id === 'director' || p === 'lookups' || p === 'self' ? 'disabled' : ''}/></td>`).join('')}</tr>`).join('')}
+        </table></div><div class="row"><button class="primary" id="rs">Save changes</button></div><div id="rm"></div>
+        <h2>Add a role</h2><div class="row"><input id="rn" placeholder="Role name, e.g. Graduate Engineer"/><button id="ra">Add role</button></div><div id="am"></div>`;
+      for (const c of view().querySelectorAll('input[data-i]')) c.onchange = () => { const x = edit[Number(c.dataset.i)]; x.permissions = c.checked ? [...x.permissions, c.dataset.p] : x.permissions.filter((p) => p !== c.dataset.p); };
+      document.getElementById('rs').onclick = async () => {
+        const changed = edit.filter((x, i) => x.id !== 'director' && JSON.stringify([...x.permissions].sort()) !== JSON.stringify([...r.roles[i].permissions].sort()));
+        if (!changed.length) return msg(document.getElementById('rm'), { ok: true, text: 'Nothing changed.' });
+        const out = [];
+        for (const x of changed) { const res = await api('/account/role', { id: x.id, name: x.name, description: x.description, permissions: x.permissions }); out.push(res.text); if (!res.ok) return msg(document.getElementById('rm'), { ok: false, text: out.join('\n') }); }
+        msg(document.getElementById('rm'), { ok: true, text: out.join('\n') });
+      };
+      document.getElementById('ra').onclick = async () => {
+        const name = document.getElementById('rn').value.trim();
+        if (!name) return;
+        const res = await api('/account/role', { name, permissions: [] });
+        msg(document.getElementById('am'), res);
+        if (res.ok) setTimeout(roles, 1500);
+      };
+    }
+
+    // ---- Invite (admin) -----------------------------------------------------------------------------------------
+    async function invite() {
+      const r = await api('/account/roles');
+      if (!r.ok) return msg(view(), r);
+      view().innerHTML = `<div class="grid"><div>
+          <h2>Invite someone</h2>
+          <div class="muted">Work email</div><input id="ie" type="email" placeholder="name@assetengineers.com.au" style="width:100%"/>
+          <div class="muted" style="margin-top:8px">Name</div><input id="in" placeholder="Jack Orr" style="width:100%"/>
+          <div class="muted" style="margin-top:8px">Role</div><select id="ir">${r.roles.map((x) => `<option value="${x.id}" ${x.id === 'engineer' ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+          <div class="row"><button class="primary" id="is">Send invite</button></div><div id="im"></div>
+          <p class="muted">Their login is made for Google sign-in only. They show as Invited on People until they first sign in; the invite lasts 7 days. The email goes from your Gmail.</p>
+        </div><div class="box"><h3>What they receive</h3><div style="font-size:14px;line-height:1.5">
+          You're invited to the AE connectors.<br/><br/>1. Open your AE account page and sign in with Google (your work account).<br/>
+          2. Follow "Set up Claude" there: privacy setting off, connect Gmail, download the AE Operations plugin and upload it in Claude.<br/>
+          3. Open the plugin's Connectors tab, connect AE Operations, Sign in with Google, Allow.<br/><br/>
+          <span class="muted">With the account page link and the connector address. Expires in 7 days.</span></div></div></div>`;
+      document.getElementById('is').onclick = async () => {
+        const email = document.getElementById('ie').value.trim(), name = document.getElementById('in').value.trim(), role = document.getElementById('ir').value;
+        if (!email.includes('@')) return msg(document.getElementById('im'), { ok: false, text: 'Enter their work email.' });
+        if (!confirm(`Invite ${name || email} as ${r.roles.find((x) => x.id === role)?.name}?`)) return;
+        document.getElementById('is').disabled = true;
+        const res = await api('/account/invite', { email, name, role });
+        msg(document.getElementById('im'), res);
+        document.getElementById('is').disabled = false;
+      };
+    }
+
+    // ---- Activity (admin) ---------------------------------------------------------------------------------------
+    async function activity() {
+      const r = await api('/account/activity');
+      if (!r.ok) return msg(view(), r);
+      view().innerHTML = `<h2>Access changes</h2><div class="scroll"><table><tr><th>When</th><th>Who</th><th>Whose access</th><th>What changed</th></tr>
+        ${r.activity.map((a) => `<tr><td>${esc(when(a.created_at))}</td><td>${esc(a.actor_email ?? '')}</td><td>${esc(a.target_email ?? 'a role')}</td><td>${esc(a.action)}</td></tr>`).join('') || '<tr><td colspan="4">Nothing yet.</td></tr>'}</table></div>
+        <p class="muted">Every change to access, roles, invites and Gmail connections is recorded here and kept.</p>`;
+    }
+
+    start().catch((e) => { app.innerHTML = `<div class="msg err">${esc(e.message || e)}</div>`; });
+  </script>
+</body>
+</html>

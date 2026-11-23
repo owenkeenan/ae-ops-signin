@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Review and accept purchase order · Asset Engineers</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #2e4c6d; color: #1e293b; min-height: 100vh; display: flex; justify-content: center; padding: 16px; box-sizing: border-box; }
+    .card { background: #fff; border-radius: 14px; padding: 24px; width: 100%; max-width: 620px; box-shadow: 0 10px 30px rgba(0,0,0,.2); align-self: flex-start; }
+    h1 { font-size: 20px; margin: 0 0 4px; color: #2e4c6d; }
+    .sub { color: #64748b; font-size: 13px; margin: 0 0 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 16px; }
+    td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    td:first-child { color: #64748b; width: 34%; }
+    .docs a { display: block; padding: 10px 12px; margin: 6px 0; border: 1px solid #cbd5e1; border-radius: 8px; color: #2e4c6d; text-decoration: none; font-size: 14px; }
+    .docs a:hover { background: #f5f9ff; }
+    .wording { background: #fff8e1; color: #6b5210; border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.45; margin: 16px 0; }
+    label { display: block; font-size: 14px; margin: 12px 0 4px; }
+    input[type=text], input[type=email], textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 16px; font-family: inherit; }
+    .tick { display: flex; gap: 10px; align-items: flex-start; margin: 16px 0; font-size: 14px; }
+    .tick input { width: 20px; height: 20px; margin-top: 2px; flex: none; }
+    button { padding: 12px 16px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 16px; cursor: pointer; background: #f8fafc; }
+    button.primary { background: #2e4c6d; color: #fff; border-color: #2e4c6d; width: 100%; margin-top: 8px; }
+    button:disabled { opacity: .6; cursor: default; }
+    .link { background: none; border: none; color: #64748b; text-decoration: underline; padding: 8px 0; font-size: 13px; }
+    .error { background: #fef2f2; color: #b91c1c; padding: 10px 12px; border-radius: 8px; font-size: 14px; margin-top: 12px; }
+    .ok { background: #ecfdf5; color: #065f46; padding: 14px; border-radius: 8px; font-size: 15px; }
+    .muted { color: #64748b; font-size: 12px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <main class="card" id="app"><p>Loading…</p></main>
+  <script type="module">
+    const API = 'https://itaahajysrmtzfvlzbvu.supabase.co/functions/v1/ae-ops/po/accept';
+    const app = document.getElementById('app');
+    const token = new URLSearchParams(location.search).get('t') || '';
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let view = null;
+    let declining = false;
+
+    function header(v) {
+      return `<h1>Purchase Order ${esc(v.po_number)}</h1><p class="sub">Asset Engineers Pty Ltd · ABN 39 662 478 793</p>
+        <table>
+          <tr><td>Supplier</td><td>${esc(v.supplier)}</td></tr>
+          ${v.project ? `<tr><td>Project</td><td>${esc(v.project)}</td></tr>` : ''}
+          ${v.amount ? `<tr><td>Amount</td><td>${esc(v.amount)}</td></tr>` : ''}
+        </table>`;
+    }
+
+    function done(v, message) {
+      const r = v.responded;
+      app.innerHTML = header(v) + `<p class="ok">${esc(message || (v.status === 'accepted' ? 'This purchase order has been accepted.' : v.status === 'declined' ? 'This purchase order was declined.' : 'This link has expired.'))}</p>`
+        + (r ? `<p class="muted">${esc(v.status === 'accepted' ? 'Accepted' : 'Answered')} by ${esc(r.name)}, ${esc(r.title)} on ${esc(r.at)}.</p>` : '')
+        + (v.status === 'expired' ? '<p class="muted">Reply to the email from Asset Engineers for a new link.</p>' : '');
+    }
+
+    function form(error) {
+      const v = view;
+      app.innerHTML = header(v) + `
+        <p style="font-size:14px">Please open and read each document before accepting:</p>
+        <div class="docs">${v.documents.map((d) => `<a href="${API}/file?t=${encodeURIComponent(token)}&doc=${d.index}" target="_blank" rel="noopener">${esc(d.kind)}: ${esc(d.name)} ↗</a>`).join('')}</div>
+        ${declining ? '' : `<div class="wording">${esc(v.wording)}</div>`}
+        <label for="name">Full name</label><input type="text" id="name" autocomplete="name" />
+        <label for="title">Position / title</label><input type="text" id="title" autocomplete="organization-title" />
+        <label for="email">Email</label><input type="email" id="email" autocomplete="email" />
+        ${declining
+          ? `<label for="reason">Reason for declining</label><textarea id="reason" rows="3"></textarea>
+             <button class="primary" id="go">Decline this purchase order</button>
+             <button class="link" id="switch">Back to accepting</button>`
+          : `<div class="tick"><input type="checkbox" id="accepted" /><label for="accepted" style="margin:0">I have read the documents above and accept Purchase Order ${esc(v.po_number)} on behalf of ${esc(v.supplier)}, as stated above. Typing my name is my electronic signature.</label></div>
+             <button class="primary" id="go">Accept purchase order</button>
+             <button class="link" id="switch">I need to decline this purchase order</button>`}
+        ${error ? `<p class="error">${esc(error)}</p>` : ''}
+        <p class="muted">Your name, title, email, the time, your IP address and browser are recorded with the acceptance. Link valid until ${esc(v.expires)}.</p>`;
+      document.getElementById('switch').onclick = () => { declining = !declining; form(); };
+      document.getElementById('go').onclick = submit;
+    }
+
+    async function submit() {
+      const btn = document.getElementById('go');
+      const body = {
+        t: token,
+        name: document.getElementById('name').value,
+        title: document.getElementById('title').value,
+        email: document.getElementById('email').value,
+        ...(declining ? { decline: true, reason: document.getElementById('reason').value } : { accepted: document.getElementById('accepted').checked }),
+      };
+      btn.disabled = true;
+      btn.textContent = 'Recording…';
+      try {
+        const res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (data.ok) return done(data.view, data.message);
+        if (data.view) return done(data.view, data.error);
+        const keep = { ...body };
+        form(data.error || 'Something went wrong. Please try again.');
+        for (const k of ['name', 'title', 'email']) document.getElementById(k).value = keep[k] || '';
+        if (declining) document.getElementById('reason').value = keep.reason || '';
+      } catch {
+        form('Could not reach Asset Engineers. Check your connection and try again.');
+      }
+    }
+
+    async function load() {
+      if (!token) { app.innerHTML = '<h1>Review and accept</h1><p class="error">This link is incomplete. Please use the link in the email from Asset Engineers.</p>'; return; }
+      try {
+        const res = await fetch(`${API}?t=${encodeURIComponent(token)}`);
+        const data = await res.json();
+        if (!res.ok) { app.innerHTML = `<h1>Review and accept</h1><p class="error">${esc(data.error || 'This link is not valid.')}</p>`; return; }
+        view = data;
+        if (view.status !== 'awaiting') return done(view);
+        form();
+      } catch {
+        app.innerHTML = '<h1>Review and accept</h1><p class="error">Could not reach Asset Engineers. Please try again shortly.</p>';
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

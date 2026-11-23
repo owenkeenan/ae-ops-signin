@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Connect to AE Operations</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #1f3a5f; color: #1e293b; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+    .card { background: #fff; border-radius: 16px; padding: 24px; width: 100%; max-width: 420px; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
+    h1 { font-size: 20px; margin: 0 0 16px; color: #1f3a5f; }
+    label { display: block; font-size: 14px; margin: 12px 0 4px; }
+    input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 16px; }
+    button { padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 16px; cursor: pointer; background: #f8fafc; }
+    button.primary { background: #1f3a5f; color: #fff; border-color: #1f3a5f; }
+    .row { display: flex; gap: 8px; margin-top: 20px; }
+    .row button { flex: 1; }
+    .full { width: 100%; margin-top: 20px; }
+    .error { background: #fef2f2; color: #b91c1c; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
+    .muted { color: #64748b; font-size: 13px; }
+    ul { padding-left: 20px; font-size: 14px; color: #475569; }
+  </style>
+</head>
+<body>
+  <main class="card" id="app"><p>Loading…</p></main>
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    const SUPABASE_URL = 'https://itaahajysrmtzfvlzbvu.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0YWFoYWp5c3JtdHpmdmx6YnZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ0MzEwOTAsImV4cCI6MjExMDAwNzA5MH0.YajNSb52QSFwZMXj0qlELDouFUGGl6ZIp3cxb3kFzPM';
+    const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: 'pkce', detectSessionInUrl: true } });
+    const app = document.getElementById('app');
+    const params = new URLSearchParams(location.search);
+    const id = params.get('authorization_id');
+    const googleError = params.get('error_description');
+    // After the Gmail step, Google comes back here with gmail=connected or gmail=error&reason=...
+    const gmailResult = params.get('gmail');
+    const gmailReason = params.get('reason');
+    let skipGmail = false;
+
+    async function gmailState(token) {
+      try {
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/ae-ops/google/status`, { headers: { Authorization: `Bearer ${token}` } });
+        return r.ok ? await r.json() : null;
+      } catch { return null; }
+    }
+
+    function showGmailStep(token, email, problem) {
+      app.innerHTML = `
+        <h1>One more step: your Gmail</h1>
+        ${problem ? `<p class="error">${esc(problem)}</p>` : ''}
+        <p>AE Operations reads, files, drafts and sends email <b>as you</b>, from <b>${esc(email)}</b>. Allow it once and it stays connected.</p>
+        <p class="muted">Google will ask you to tick the Gmail permission. Only your own mailbox; nobody else sees it.</p>
+        <div class="row"><button id="skip">Skip for now</button><button class="primary" id="gmail">Connect Gmail</button></div>`;
+      document.getElementById('skip').onclick = () => { skipGmail = true; render(); };
+      document.getElementById('gmail').onclick = async () => {
+        document.getElementById('gmail').disabled = true;
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/ae-ops/google/start`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ return_to: `${location.origin}${location.pathname}?authorization_id=${encodeURIComponent(id ?? '')}` }),
+        }).then((x) => x.json()).catch(() => ({}));
+        if (r.url) location.href = r.url; else showGmailStep(token, email, "Couldn't start the Gmail sign-in. Try again, or skip for now.");
+      };
+    }
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    function showError(msg, offerSignIn) {
+      app.innerHTML = `<h1>Connect to AE Operations</h1><p class="error">${esc(msg)}</p>` + (offerSignIn ? '<button class="full" id="again">Sign in again</button>' : '');
+      if (offerSignIn) document.getElementById('again').onclick = async () => { await sb.auth.signOut(); render(); };
+    }
+
+    function showSignIn(msg) {
+      app.innerHTML = `
+        <h1>Sign in to AE Operations</h1>
+        ${msg ? `<p class="error">${esc(msg)}</p>` : ''}
+        <button class="primary full" id="google" type="button">Sign in with Google</button>
+        <p class="muted">Use your @assetengineers.com.au Google account.</p>
+        <details><summary class="muted">Sign in with email and password instead</summary>
+        <form id="f">
+          <label for="email">Email</label><input id="email" type="email" autocomplete="username" required />
+          <label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required />
+          <button class="full" type="submit">Sign in</button>
+        </form></details>`;
+      document.getElementById('google').onclick = async () => {
+        const back = `${location.origin}${location.pathname}?authorization_id=${encodeURIComponent(id ?? '')}`;
+        const { error } = await sb.auth.signInWithOAuth({
+          provider: 'google',
+          options: { redirectTo: back, queryParams: { hd: 'assetengineers.com.au', prompt: 'select_account' } },
+        });
+        if (error) showSignIn(error.message);
+      };
+      document.getElementById('f').onsubmit = async (e) => {
+        e.preventDefault();
+        const { error } = await sb.auth.signInWithPassword({ email: document.getElementById('email').value.trim(), password: document.getElementById('password').value });
+        if (error) return showSignIn(error.message);
+        render();
+      };
+    }
+
+    async function render() {
+      if (!id) return showError('This link is missing its authorisation code. Start again from Claude or Cursor.');
+      const { data: s } = await sb.auth.getSession();
+      if (params.has('code') || googleError || gmailResult) history.replaceState(null, '', `${location.pathname}?authorization_id=${encodeURIComponent(id)}`);
+      if (!s.session) return showSignIn(googleError ? `Google sign-in didn't work: ${googleError}` : '');
+      const { data, error } = await sb.auth.oauth.getAuthorizationDetails(id);
+      if (error || !data) return showError(error?.message ?? 'Could not load the request.', true);
+      if (data.redirect_url) { location.href = data.redirect_url; return; }
+      if (!skipGmail) {
+        const g = await gmailState(s.session.access_token);
+        if (g?.available && !g.connected) return showGmailStep(s.session.access_token, s.session.user.email, gmailResult === 'error' ? gmailReason : g.problem ? `Your Gmail sign-in stopped working (${g.problem}).` : '');
+      }
+      const appName = data.client?.name || 'An AI app';
+      app.innerHTML = `
+        <h1>Connect to AE Operations</h1>
+        ${gmailResult === 'connected' ? '<p class="muted">Gmail connected.</p>' : ''}
+        <p><b>${esc(appName)}</b> wants to use AE Operations as <b>${esc(s.session.user.email)}</b>.</p>
+        <ul>
+          <li>Use the AE tools as you</li>
+          <li>Anything that changes records or sends is shown to you first</li>
+        </ul>
+        <p class="muted">You can remove this connection at any time in Claude's or Cursor's settings.</p>
+        <div class="row"><button id="deny">Deny</button><button class="primary" id="allow">Allow</button></div>
+        <p class="muted">Not you, or want to use Google? <a href="#" id="switch">Sign in a different way</a></p>`;
+      document.getElementById('switch').onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); showSignIn(); };
+      const decide = async (allow) => {
+        document.getElementById('allow').disabled = true;
+        document.getElementById('deny').disabled = true;
+        const res = allow ? await sb.auth.oauth.approveAuthorization(id) : await sb.auth.oauth.denyAuthorization(id);
+        if (res.error) return showError(res.error.message, true);
+        if (res.data?.redirect_url) location.href = res.data.redirect_url;
+      };
+      document.getElementById('allow').onclick = () => decide(true);
+      document.getElementById('deny').onclick = () => decide(false);
+    }
+
+    render().catch((e) => showError(e.message || String(e)));
+  </script>
+</body>
+</html>
